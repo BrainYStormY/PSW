@@ -1,1 +1,2 @@
-# PSW
+# WasteFlow
+## Distributed Urban Waste Simulation
