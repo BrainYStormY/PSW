@@ -33,6 +33,8 @@ private:
 public:
 // Constructor
     House(int id, Position pos) : Building(id, pos){};
+// Getters
+    const std::vector<Resident*>& getResidents() const {return residents;}   // [Francisco] needed to check US27
 // Setters
     void addResident(Resident* res){residents.push_back(res);}
 };
@@ -91,7 +93,14 @@ public:
 // Constructor
     Bin(int id, Position pos, BinType type, double cap) : id(id), position(pos), type(type), capacity(cap){};
 // Getters
-    bool isFull(){return fillLevel >= capacity;}
+    // [Francisco] getId/getPosition: main.cpp and PROJECT_CONTEXT say Bin already has them,
+    // but they are missing in this copy of the file -> merge with Bruno's version.
+    int getId() const {return id;}
+    Position getPosition() const {return position;}
+    BinType getType() const {return type;}          // [Francisco] residents only use General bins (US31)
+    double getCapacity() const {return capacity;}   // [Francisco]
+    double getFillLevel() const {return fillLevel;} // [Francisco]
+    bool isFull() const {return fillLevel >= capacity;}   // [Francisco] "const" added
 // Setters
     bool deposit(double amount, WasteType wasteType){
         if(isFull())return false;
