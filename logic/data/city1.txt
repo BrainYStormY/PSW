@@ -1,0 +1,24 @@
+# City 1: depot in the centre, 3 trucks, 15 bins spread around
+# GRID size | DEPOT x y | TRUCK id x y capacity | BIN id x y load
+GRID 30
+DEPOT 15 15
+
+TRUCK 1 15 15 100
+TRUCK 2 15 15 100
+TRUCK 3 15 15 100
+
+BIN 1   4  3 20
+BIN 2   9  6 15
+BIN 3  14  2 25
+BIN 4  22  4 10
+BIN 5  27  8 20
+BIN 6  25 14 15
+BIN 7  28 20 20
+BIN 8  21 25 15
+BIN 9  17 28 10
+BIN 10 10 26 20
+BIN 11  3 23 15
+BIN 12  2 15 10
+BIN 13  7 12 20
+BIN 14 19 10 15
+BIN 15 12 19 10

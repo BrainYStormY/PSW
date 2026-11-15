@@ -5,30 +5,36 @@
 #include <vector>
 
 
+// Plans the route of ONE truck: start -> bins -> end.
+// Method: nearest neighbour gives a first order, then 2-opt improves it.
 class RoutePlanner{
 private:
-    Position depot;
+    Position start;   // where the truck leaves from
+    Position end;     // where the truck must finish (the depot)
 
-    // Distancia numa grelha sem obstaculos (o camiao so anda na horizontal/vertical)
-    static int distance(Position a, Position b);
-
-    // Comprimento total: depot -> caixotes pela ordem dada -> depot
+    // Total length: start -> bins in the given order -> end
     int routeLength(const std::vector<Bin*>& order) const;
 
-    // Passo 1: vizinho mais proximo
+    // Step 1: nearest neighbour
     std::vector<Bin*> nearestNeighbour(const std::vector<Bin*>& bins) const;
 
-    // Passo 2: melhorar com 2-opt
-    void twoOpt(std::vector<Bin*>& order) const;
-
 public:
-// Constructor
-    RoutePlanner(Position depotPos) : depot(depotPos){};
+// Constructors
+    // Old version: the truck starts and ends at the depot
+    RoutePlanner(Position depotPos) : start(depotPos), end(depotPos){};
+    // New version: the truck starts at startPos and ends at endPos
+    RoutePlanner(Position startPos, Position endPos) : start(startPos), end(endPos){};
 
-// Devolve a ordem pela qual o camiao deve visitar os caixotes
+// Grid distance with no obstacles (the truck only moves horizontally/vertically)
+    static int distance(Position a, Position b);
+
+// Returns the order in which the truck should visit the bins
     std::vector<Bin*> planOrder(const std::vector<Bin*>& bins) const;
 
-// Devolve todas as celulas da grelha por onde o camiao passa (trajetoria completa)
+// Step 2: improves an existing order with 2-opt (public so other algorithms can use it)
+    void twoOpt(std::vector<Bin*>& order) const;
+
+// Returns every grid cell the truck goes through (full trajectory)
     std::vector<Position> buildPath(const std::vector<Bin*>& order) const;
 
     int totalDistance(const std::vector<Bin*>& order) const {return routeLength(order);}

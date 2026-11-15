@@ -1,217 +1,145 @@
 // =====================================================================
-//  main.cpp  -  Teste do planeador de rotas do WasteFlow
+//  main.cpp  -  WasteFlow: routes for several trucks
 // ---------------------------------------------------------------------
-//  Versao simplificada: 1 camiao, 1 deposito e N caixotes numa grelha
-//  30x30. O utilizador indica as posicoes pelo teclado e o programa:
-//    1) calcula a ordem pela qual o camiao deve visitar os caixotes
-//       (RoutePlanner::planOrder -> vizinho mais proximo + 2-opt);
-//    2) gera a trajetoria celula a celula (RoutePlanner::buildPath);
-//    3) mostra o resultado em texto (troco a troco) e num mapa com setas.
+//  Reads depot, trucks and bins from a text file (see InputReader.hpp),
+//  lets the user choose an algorithm and shows the trajectories.
 //
-//  Compilar:  g++ -std=c++17 -Wall main.cpp RoutePlanner.cpp -o wasteflow
-//  Correr:    ./wasteflow
-//
-//  Nota: nao se inclui o SimulationEngine.hpp porque, por agora, nao e
-//  preciso (e o Statistics::update e privado mas e chamado pelo
-//  Simulation, o que vai dar erro quando for implementado).
+//  Build:  make            (or see the Makefile for the g++ line)
+//  Run:    ./wasteflow data/city1.txt
 // =====================================================================
 
-#include "Types.hpp"
-#include "Environment.hpp"
-#include "RoutePlanner.hpp"
+#include "Problem.hpp"
+#include "InputReader.hpp"
+#include "Display.hpp"
+#include "Improvement.hpp"
+#include "SweepAlgorithm.hpp"
+#include "KMeansAlgorithm.hpp"
+#include "ClarkeWrightAlgorithm.hpp"
+#include "InsertionAlgorithm.hpp"
 #include <iostream>
-#include <vector>
 #include <string>
-#include <sstream>   // std::istringstream, para interpretar cada linha lida
-#include <cstdlib>   // std::exit, std::abs
-
-// Tamanho da grelha (GRID x GRID). Coordenadas validas: 0 .. GRID-1
-const int GRID = 30;
+#include <sstream>
+#include <vector>
+#include <memory>
+#include <cstdlib>   // std::exit
 
 
 // ---------------------------------------------------------------------
-//  LEITURA DO TECLADO
+//  KEYBOARD INPUT
 // ---------------------------------------------------------------------
-//  Primeira versao usava "std::cin >> p.x >> p.y". Problema: se o
-//  utilizador escrevia so um numero (ou usava virgula), o cin ficava
-//  a espera do segundo numero e parecia que o programa tinha parado.
-//  Solucao: ler SEMPRE a linha inteira com getline e so depois
-//  interpretar o que la esta. Assim cada Enter tem sempre resposta.
+//  Always read the whole line with getline and only then look at it,
+//  so every Enter gets an answer (cin >> can wait forever for input).
 // ---------------------------------------------------------------------
 
-// Le uma posicao. Aceita "5 7", "5,7" ou "(5,7)".
-// Devolve false se a linha nao tiver dois numeros ou se sairem da grelha.
-bool readPosition(Position& p){
-    std::string line;
-    if(!std::getline(std::cin, line)) std::exit(1);   // fim do input (ex: Ctrl+D) -> sai
-
-    // troca virgulas e parenteses por espacos, para "5,7" e "(5,7)" virarem "5 7"
-    for(char& c : line){
-        if(c == ',' || c == '(' || c == ')') c = ' ';
-    }
-
-    // le os dois numeros a partir da linha (como se fosse um cin so dessa linha)
-    std::istringstream in(line);
-    if(!(in >> p.x >> p.y)) return false;
-
-    // confirma que a posicao esta dentro da grelha
-    return p.x >= 0 && p.x < GRID && p.y >= 0 && p.y < GRID;
-}
-
-// Le um inteiro nao negativo (numero de caixotes). Devolve -1 se for invalido.
+// Reads a whole number. Returns -1 if the line is not a valid number.
 int readInt(){
     std::string line;
-    if(!std::getline(std::cin, line)) std::exit(1);
+    if(!std::getline(std::cin, line)) std::exit(0);   // end of input (ex: Ctrl+D) -> quit
     std::istringstream in(line);
     int n;
     if(!(in >> n) || n < 0) return -1;
     return n;
 }
 
-
-// ---------------------------------------------------------------------
-//  MAPA COM SETAS
-// ---------------------------------------------------------------------
-//  Constroi uma matriz de caracteres GRID x GRID e desenha:
-//    '.'          celula por onde o camiao nao passa
-//    > < ^ v      sentido em que o camiao SAI dessa celula
-//    1, 2, 3...   caixotes, numerados pela ORDEM de recolha
-//                 (nao pelo id: o C4 pode aparecer como "2")
-//    'B'          caixote a partir do 10.o (so ha um digito por celula)
-//    'D'          deposito
-//  A ordem de desenho importa: primeiro as setas, depois os caixotes e
-//  por fim o deposito, para estes nao serem tapados pelas setas.
-//
-//  Atencao: no ecra o y CRESCE PARA BAIXO (linha 0 e a de cima),
-//  por isso andar para y+1 desenha-se com 'v'.
-// ---------------------------------------------------------------------
-void printGrid(const Position& depot, const std::vector<Bin*>& order, const std::vector<Position>& path){
-    // grid[y][x] -> primeiro indice e a linha (y), segundo e a coluna (x)
-    std::vector<std::vector<char>> grid(GRID, std::vector<char>(GRID, '.'));
-
-    // compara cada celula do caminho com a seguinte para saber a direcao
-    for(size_t i = 0; i + 1 < path.size(); i++){
-        Position a = path[i], b = path[i+1];
-        char arrow;
-        if(b.x > a.x)      arrow = '>';
-        else if(b.x < a.x) arrow = '<';
-        else if(b.y > a.y) arrow = 'v';    // y cresce para baixo no ecra
-        else               arrow = '^';
-        grid[a.y][a.x] = arrow;            // se o camiao passar duas vezes, fica a ultima seta
-    }
-
-    // caixotes: '1' + i da o caracter '1', '2', ... ate '9'
-    for(size_t i = 0; i < order.size(); i++){
-        Position p = order[i]->getPosition();
-        grid[p.y][p.x] = (i < 9) ? char('1' + i) : 'B';
-    }
-    grid[depot.y][depot.x] = 'D';
-
-    // cabecalho com o x (so o algarismo das unidades, para as colunas alinharem)
-    std::cout << "    ";
-    for(int x = 0; x < GRID; x++) std::cout << x % 10 << ' ';
-    std::cout << "  <- x\n";
-
-    // cada linha comeca com o seu y (com espaco extra se tiver 1 algarismo)
-    for(int y = 0; y < GRID; y++){
-        std::cout << (y < 10 ? " " : "") << y << "  ";
-        for(int x = 0; x < GRID; x++) std::cout << grid[y][x] << ' ';
-        std::cout << '\n';
+// Asks a yes/no question until the answer starts with y or n.
+bool askYesNo(const std::string& question){
+    while(true){
+        std::cout << question;
+        std::string line;
+        if(!std::getline(std::cin, line)) std::exit(0);
+        if(!line.empty() && (line[0] == 'y' || line[0] == 'Y')) return true;
+        if(!line.empty() && (line[0] == 'n' || line[0] == 'N')) return false;
     }
 }
 
 
-// ---------------------------------------------------------------------
-//  DESCRICAO EM TEXTO
-// ---------------------------------------------------------------------
-//  Para cada troco (deposito -> 1.o caixote -> ... -> deposito) mostra
-//  quantas celulas o camiao anda para cada lado e o total do troco.
-//  dx = destino.x - atual.x  (positivo = direita, negativo = esquerda)
-//  dy = destino.y - atual.y  (positivo = baixo,   negativo = cima)
-//  A soma |dx| + |dy| e a distancia de Manhattan desse troco.
-// ---------------------------------------------------------------------
-void printSteps(const Position& depot, const std::vector<Bin*>& order){
-    // lista de paragens pela ordem calculada, terminando no deposito
-    std::vector<Position> stops;
-    std::vector<std::string> names;
-    for(Bin* b : order){
-        stops.push_back(b->getPosition());
-        names.push_back("C" + std::to_string(b->getId()));
-    }
-    stops.push_back(depot);
-    names.push_back("D");
-
-    Position cur = depot;          // onde o camiao esta agora
-    std::string curName = "D";
-    for(size_t i = 0; i < stops.size(); i++){
-        Position t = stops[i];     // proxima paragem
-        int dx = t.x - cur.x, dy = t.y - cur.y;
-
-        std::cout << i+1 << ". " << curName << "(" << cur.x << "," << cur.y << ") -> "
-                  << names[i] << "(" << t.x << "," << t.y << "): ";
-        if(dx > 0) std::cout << dx << " para a direita  ";
-        if(dx < 0) std::cout << -dx << " para a esquerda  ";
-        if(dy > 0) std::cout << dy << " para baixo  ";
-        if(dy < 0) std::cout << -dy << " para cima  ";
-        std::cout << "[" << std::abs(dx) + std::abs(dy) << " celulas]\n";
-
-        // o destino passa a ser o ponto de partida do troco seguinte
-        cur = t;
-        curName = names[i];
-    }
-}
-
-
-int main(){
-    // 1) Posicao do deposito (ponto de partida e de chegada do camiao)
-    Position depot;
-    std::cout << "Posicao do deposito (dois numeros entre 0 e " << GRID-1 << ", ex: 0 0): ";
-    while(!readPosition(depot)){
-        std::cout << "Posicao invalida (escreve x e y, ex: 5 7): ";
-    }
-
-    // 2) Numero de caixotes
-    std::cout << "Quantos caixotes? ";
-    int n = readInt();
-    while(n < 0){
-        std::cout << "Numero invalido, tenta outra vez: ";
-        n = readInt();
-    }
-
-    // 3) Posicao de cada caixote.
-    //    Usa-se a classe Bin dos colegas (Environment.hpp). O tipo e a
-    //    capacidade (General, 100.0) ainda nao contam para a rota.
-    std::vector<Bin*> bins;
-    for(int i = 0; i < n; i++){
-        Position p;
-        std::cout << "Caixote " << i+1 << " (x y): ";
-        while(!readPosition(p)){
-            std::cout << "Posicao invalida (escreve x e y, ex: 5 7): ";
+// Runs one algorithm and, if asked, the improvement.
+// Prints the distance before and after so the effect is visible.
+Plan run(const RoutingAlgorithm& algorithm, const Problem& problem, bool improve, bool verbose){
+    Plan plan = algorithm.solve(problem);
+    if(improve){
+        int before = RouteUtils::totalDistance(problem, plan);
+        Improvement::apply(problem, plan);
+        plan.algorithm += " + improvement";
+        if(verbose){
+            std::cout << "\nDistance before improvement: " << before
+                      << " | after: " << RouteUtils::totalDistance(problem, plan) << "\n";
         }
-        bins.push_back(new Bin(i+1, p, BinType::General, 100.0));
+    }
+    return plan;
+}
+
+
+// Shows a plan: summary, map with every truck and, if wanted, details per truck
+void show(const Problem& problem, const Plan& plan){
+    Display::printPlan(problem, plan);
+    Display::printOverviewMap(problem, plan);
+    if(askYesNo("\nShow step by step and arrow map for each truck? (y/n): ")){
+        Display::printTruckDetails(problem, plan);
+    }
+}
+
+
+int main(int argc, char* argv[]){
+    // 1) Input file: from the command line or typed by the user
+    std::string path;
+    if(argc >= 2){
+        path = argv[1];
+    }
+    else{
+        std::cout << "Input file (ex: data/city1.txt): ";
+        if(!std::getline(std::cin, path)) return 1;
     }
 
-    // 4) Calculo da rota
-    RoutePlanner planner(depot);
-    std::vector<Bin*> order = planner.planOrder(bins);      // ordem de visita
-    std::vector<Position> path = planner.buildPath(order);  // celulas percorridas
-
-    // 5) Resultados
-    std::cout << "\nOrdem de recolha: D";
-    for(Bin* b : order){
-        Position p = b->getPosition();
-        std::cout << " -> C" << b->getId() << "(" << p.x << "," << p.y << ")";
+    Problem problem;
+    std::string error;
+    if(!InputReader::read(path, problem, error)){
+        std::cerr << "Error reading '" << path << "': " << error << "\n";
+        return 1;
     }
-    std::cout << " -> D\n";
-    std::cout << "Distancia total: " << planner.totalDistance(order) << " celulas\n\n";
+    Display::printProblem(problem);
 
-    std::cout << "Percurso passo a passo:\n";
-    printSteps(depot, order);
+    // 2) Available algorithms (to add one: write the class and push it here)
+    std::vector<std::unique_ptr<RoutingAlgorithm>> algorithms;
+    algorithms.push_back(std::make_unique<SweepAlgorithm>());
+    algorithms.push_back(std::make_unique<KMeansAlgorithm>());
+    algorithms.push_back(std::make_unique<ClarkeWrightAlgorithm>());
+    algorithms.push_back(std::make_unique<InsertionAlgorithm>());
 
-    std::cout << "\nMapa (D = deposito, 1,2,3... = ordem de recolha, setas = sentido do camiao):\n";
-    printGrid(depot, order, path);
+    // 3) Menu
+    while(true){
+        std::cout << "\nChoose an algorithm:\n";
+        for(size_t i = 0; i < algorithms.size(); i++){
+            std::cout << "  " << i+1 << ") " << algorithms[i]->name() << "\n";
+        }
+        int runAll = algorithms.size() + 1;
+        std::cout << "  " << runAll << ") Run all and pick the cheapest\n";
+        std::cout << "  0) Exit\n> ";
 
-    // 6) Os Bin foram criados com new, por isso tem de ser libertados com delete
-    for(Bin* b : bins) delete b;
-    return 0;
+        int choice = readInt();
+        if(choice == 0) break;
+        if(choice < 1 || choice > runAll){
+            std::cout << "Invalid option.\n";
+            continue;
+        }
+
+        bool improve = askYesNo("Apply improvement (2-opt + relocate)? (y/n): ");
+
+        if(choice != runAll){
+            Plan plan = run(*algorithms[choice-1], problem, improve, true);
+            show(problem, plan);
+        }
+        else{
+            // run every algorithm and keep the best plan
+            std::vector<Plan> plans;
+            size_t best = 0;
+            for(const auto& algorithm : algorithms){
+                plans.push_back(run(*algorithm, problem, improve, false));
+                if(RouteUtils::isBetter(problem, plans.back(), plans[best])) best = plans.size() - 1;
+            }
+            Display::printComparison(problem, plans, best);
+            show(problem, plans[best]);
+        }
+    }
+    return 0;   // the Problem deletes the bins by itself
 }

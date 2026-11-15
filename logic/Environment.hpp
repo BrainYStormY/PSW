@@ -91,6 +91,9 @@ public:
 // Constructor
     Bin(int id, Position pos, BinType type, double cap) : id(id), position(pos), type(type), capacity(cap){};
 // Getters
+    int getId() const {return id;}
+    Position getPosition() const {return position;}
+    double getFillLevel() const {return fillLevel;}    // how much waste is in the bin
     bool isFull(){return fillLevel >= capacity;}
 // Setters
     bool deposit(double amount, WasteType wasteType){

@@ -1,6 +1,6 @@
 // =====================================================================
-//  RoutePlanner.cpp  -  Implementacao do planeador de rotas
-//  (ver explicacao geral do metodo em RoutePlanner.hpp)
+//  RoutePlanner.cpp  -  Route of ONE truck
+//  (see the general idea in RoutePlanner.hpp)
 // =====================================================================
 
 #include "RoutePlanner.hpp"
@@ -9,46 +9,43 @@
 #include <climits>     // INT_MAX
 
 
-// Distancia de Manhattan entre duas celulas: quantas celulas o camiao
-// tem de andar na horizontal mais quantas tem de andar na vertical.
-// Ex: (0,0) -> (3,4) = 3 + 4 = 7 celulas.
+// Manhattan distance: cells to move horizontally + cells to move vertically.
+// Ex: (0,0) -> (3,4) = 3 + 4 = 7 cells.
 int RoutePlanner::distance(Position a, Position b){
     return std::abs(a.x - b.x) + std::abs(a.y - b.y);
 }
 
 
-// Soma as distancias de todos os trocos da rota, incluindo a ida
-// do deposito ao 1.o caixote e o regresso do ultimo ao deposito.
+// Sum of every leg: start -> 1st bin -> ... -> last bin -> end.
+// With no bins the truck just goes from start to end.
 int RoutePlanner::routeLength(const std::vector<Bin*>& order) const{
-    if(order.empty()) return 0;
+    if(order.empty()) return distance(start, end);
 
-    int total = distance(depot, order.front()->getPosition());           // deposito -> 1.o
+    int total = distance(start, order.front()->getPosition());                  // start -> 1st bin
     for(size_t i = 1; i < order.size(); i++){
-        total += distance(order[i-1]->getPosition(), order[i]->getPosition());  // caixote -> caixote
+        total += distance(order[i-1]->getPosition(), order[i]->getPosition());  // bin -> bin
     }
-    total += distance(order.back()->getPosition(), depot);                // ultimo -> deposito
+    total += distance(order.back()->getPosition(), end);                        // last bin -> end
     return total;
 }
 
 
 // ---------------------------------------------------------------------
-//  PASSO 1 - Vizinho mais proximo
+//  STEP 1 - Nearest neighbour
 // ---------------------------------------------------------------------
-//  Comeca no deposito. Em cada passo procura, entre os caixotes ainda
-//  nao visitados, o que esta mais perto da posicao atual, vai para la
-//  e marca-o como visitado. Repete ate visitar todos.
-//  E rapido e simples, mas por ser "guloso" (so olha para o passo
-//  seguinte) pode deixar a rota com cruzamentos e voltas desnecessarias,
-//  sobretudo no regresso ao deposito. Isso e corrigido no passo 2.
+//  Start at the truck position. At each step go to the closest bin
+//  that was not visited yet. Repeat until every bin is visited.
+//  Fast and simple, but "greedy" (it only looks one step ahead), so
+//  the route can have crossings. Step 2 fixes that.
 // ---------------------------------------------------------------------
 std::vector<Bin*> RoutePlanner::nearestNeighbour(const std::vector<Bin*>& bins) const{
     std::vector<Bin*> order;
-    std::vector<bool> visited(bins.size(), false);   // visited[i] -> o caixote i ja foi escolhido?
-    Position current = depot;
+    std::vector<bool> visited(bins.size(), false);   // visited[i] -> bin i already chosen?
+    Position current = start;
 
     for(size_t step = 0; step < bins.size(); step++){
-        int best = -1;           // indice do caixote mais proximo encontrado
-        int bestDist = INT_MAX;  // comeca com "infinito" para qualquer distancia ser menor
+        int best = -1;           // index of the closest bin found so far
+        int bestDist = INT_MAX;  // start with "infinity" so any distance is smaller
 
         for(size_t i = 0; i < bins.size(); i++){
             if(visited[i]) continue;
@@ -59,7 +56,7 @@ std::vector<Bin*> RoutePlanner::nearestNeighbour(const std::vector<Bin*>& bins) 
             }
         }
 
-        // vai para o mais proximo
+        // go to the closest one
         visited[best] = true;
         order.push_back(bins[best]);
         current = bins[best]->getPosition();
@@ -69,23 +66,20 @@ std::vector<Bin*> RoutePlanner::nearestNeighbour(const std::vector<Bin*>& bins) 
 
 
 // ---------------------------------------------------------------------
-//  PASSO 2 - Melhoria 2-opt
+//  STEP 2 - 2-opt improvement
 // ---------------------------------------------------------------------
-//  Ideia: escolher um troco da rota (do caixote i ao caixote j) e
-//  percorre-lo ao contrario. Exemplo com a ordem A B C D E:
-//      inverter de B a D  ->  A D C B E
-//  Isto troca duas ligacoes da rota (A-B e D-E passam a A-D e B-E).
-//  Quando a rota original tinha um "cruzamento", esta inversao desfaz-o
-//  e a rota fica mais curta.
+//  Idea: pick a piece of the route (from bin i to bin j) and travel
+//  it backwards. Example with order A B C D E:
+//      reverse B..D  ->  A D C B E
+//  This removes a "crossing" and makes the route shorter.
 //
-//  Testam-se todos os pares (i, j):
-//    - se a rota ficar mais curta, a inversao fica;
-//    - se nao, volta-se a inverter para desfazer.
-//  Repete-se tudo enquanto houver alguma melhoria. Quando uma passagem
-//  completa nao melhorar nada, a rota ja nao se pode melhorar com 2-opt.
+//  Every pair (i, j) is tested:
+//    - if the route gets shorter, keep the change;
+//    - if not, reverse again to undo it.
+//  Repeat while something improves.
 //
-//  Nota: o deposito nao esta no vetor, por isso nunca sai do inicio
-//  nem do fim; routeLength ja o inclui nas contas.
+//  Note: start and end are not in the vector, so they never move;
+//  routeLength already counts them.
 // ---------------------------------------------------------------------
 void RoutePlanner::twoOpt(std::vector<Bin*>& order) const{
     bool improved = true;
@@ -96,16 +90,16 @@ void RoutePlanner::twoOpt(std::vector<Bin*>& order) const{
 
         for(size_t i = 0; i + 1 < order.size(); i++){
             for(size_t j = i + 1; j < order.size(); j++){
-                // inverte o troco entre i e j (inclusive)
+                // reverse the piece between i and j (inclusive)
                 std::reverse(order.begin() + i, order.begin() + j + 1);
                 int newLength = routeLength(order);
 
                 if(newLength < bestLength){
-                    bestLength = newLength;   // melhorou: fica assim
+                    bestLength = newLength;   // better: keep it
                     improved = true;
                 }
                 else{
-                    std::reverse(order.begin() + i, order.begin() + j + 1);   // nao melhorou: desfaz
+                    std::reverse(order.begin() + i, order.begin() + j + 1);   // not better: undo
                 }
             }
         }
@@ -113,7 +107,7 @@ void RoutePlanner::twoOpt(std::vector<Bin*>& order) const{
 }
 
 
-// Junta os dois passos: rota inicial + melhoria
+// Both steps together: first order + improvement
 std::vector<Bin*> RoutePlanner::planOrder(const std::vector<Bin*>& bins) const{
     std::vector<Bin*> order = nearestNeighbour(bins);
     twoOpt(order);
@@ -122,32 +116,31 @@ std::vector<Bin*> RoutePlanner::planOrder(const std::vector<Bin*>& bins) const{
 
 
 // ---------------------------------------------------------------------
-//  Trajetoria celula a celula
+//  Cell by cell trajectory
 // ---------------------------------------------------------------------
-//  A ordem diz QUAIS caixotes visitar e por que ordem; aqui calcula-se
-//  POR ONDE o camiao passa. Entre cada par de paragens anda primeiro
-//  tudo o que tem a andar em x e depois tudo em y (forma de "L").
-//  Qualquer caminho so com passos horizontais/verticais na direcao
-//  certa tem o mesmo comprimento (Manhattan), por isso esta escolha
-//  nao altera a distancia total.
+//  The order says WHICH bins and in what order; this says WHERE the
+//  truck drives. Between two stops it first moves all the way in x,
+//  then all the way in y ("L" shape). Any path with only horizontal/
+//  vertical steps in the right direction has the same Manhattan
+//  length, so this choice does not change the total distance.
 // ---------------------------------------------------------------------
 std::vector<Position> RoutePlanner::buildPath(const std::vector<Bin*>& order) const{
     std::vector<Position> path;
-    Position current = depot;
+    Position current = start;
     path.push_back(current);
 
-    // destinos por ordem: os caixotes e, no fim, o regresso ao deposito
+    // targets in order: the bins and, at the end, the end point
     std::vector<Position> targets;
     for(Bin* bin : order) targets.push_back(bin->getPosition());
-    targets.push_back(depot);
+    targets.push_back(end);
 
     for(Position target : targets){
-        // anda uma celula de cada vez em x ate acertar a coluna...
+        // move one cell at a time in x until the column is right...
         while(current.x != target.x){
             current.x += (target.x > current.x) ? 1 : -1;
             path.push_back(current);
         }
-        // ...e depois em y ate acertar a linha
+        // ...then in y until the row is right
         while(current.y != target.y){
             current.y += (target.y > current.y) ? 1 : -1;
             path.push_back(current);
